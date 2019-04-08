@@ -1033,7 +1033,7 @@ class Static(Processing):
 
     office_ext = [
         "doc", "docm", "dotm", "docx", "hwp", "ppt", "pptm", "pptx", "potm",
-        "ppam", "ppsm", "xls", "xlsm", "xlsx",
+        "ppam", "ppsm", "xls", "xlsm", "xlsx",'qwe'
     ]
 
     def run(self):
