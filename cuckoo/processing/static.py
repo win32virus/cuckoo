@@ -48,6 +48,7 @@ from elftools.elf.enums import ENUM_D_TAG
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 from elftools.elf.segments import NoteSegment
+from plugin_biff import cBIFF
 
 log = logging.getLogger(__name__)
 
@@ -491,6 +492,28 @@ class OfficeDocument(object):
                 "Error extracting macros from office document (this is an "
                 "issue with oletools - please report upstream): %s", e
             )
+
+        # get XLM macros
+        p.xlm_macros = []
+        for excel_stream in ('Workbook','Book'):
+            if p.ole_file.exists(excel_stream):
+                log.debug('found excels stream %r' % excel_stream)
+                data = p.ole_file.openstream(excel_stream).read()
+                biff_plugin = cBIFF(name=[excel_stream], stream=data, options='x')
+                self.xlm_macros = biff_pluing.Analyze()
+               
+                xlm_code='' 
+                for line in self.xlm_macros:
+                    xlm_code += "' " + line + '\n'
+                
+                yield {
+                    "steam" : excel_stream, 
+                    "filename" : 'xlm_macro',
+                    "orig_code" : xlm_code, 
+                    "deobf" : 'xlm_macro.txt'
+                }
+        
+            
 
     def deobfuscate(self, code):
         """Bruteforce approach of regex-based deobfuscation."""
@@ -1033,7 +1056,7 @@ class Static(Processing):
 
     office_ext = [
         "doc", "docm", "dotm", "docx", "hwp", "ppt", "pptm", "pptx", "potm",
-        "ppam", "ppsm", "xls", "xlsm", "xlsx",
+        "ppam", "ppsm", "xls", "xlsm", "xlsx", "xlm",
     ]
 
     def run(self):

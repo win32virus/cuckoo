@@ -29,13 +29,39 @@
 </style>
 
 <section id="static_analysis">
+        {% for office in report.analysis.static.office.eps %}
+        <div class="row">
+            <div class="col-md-12">
+                <div class="panel" id="accordion">
+                    <div class="panel-default">
+                        <div class="panel-heading">
+                            <label class="accordion-toggle">{{ office.filename }} <small>({{ office.stream }})</small></label>
+                        </div>
+
+                        <div id="options" class="panel-collapse collapse in" style="text-align: left;">
+                            <div class="panel-body">
+                                <div class="col-md-6">
+                                    <h4>eps</h4>
+                                    <hr>
+                                    <pre>
+                                        <code class="eps_code">{{ office.eps }}</code>
+                                    </pre>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endfor %}    
     {% for office in report.analysis.static.office.macros %}
         <div class="row">
             <div class="col-md-12">
                 <div class="panel" id="accordion">
                     <div class="panel-default">
                         <div class="panel-heading">
-                            <label class=accordion-toggle">{{ office.filename }} <small>({{ office.stream }})</small></label>
+                            <label class="accordion-toggle">{{ office.filename }} <small>({{ office.stream }})</small></label>
                         </div>
 
                         <div id="options" class="panel-collapse collapse in" style="text-align: left;">

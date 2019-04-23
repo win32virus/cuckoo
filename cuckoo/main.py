@@ -93,6 +93,7 @@ def cuckoo_init(level, ctx, cfg=None):
     """Initialize Cuckoo configuration.
     @param quiet: enable quiet mode.
     """
+    
     logo()
 
     # It would appear this is the first time Cuckoo is being run (on this

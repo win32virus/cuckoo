@@ -50,7 +50,7 @@ def choose_package(file_type, file_name, exports):
         return "doc"
     elif "Microsoft Office Excel" in file_type or \
             "Microsoft Excel" in file_type or \
-            file_name.endswith((".xls", ".xlsx", ".xlt", ".xlsm", ".iqy", ".slk")):
+            file_name.endswith((".xls", ".xlsx", ".xlt", ".xlsm", ".iqy", ".slk", ".xlm")):
         return "xls"
     elif "Microsoft Office PowerPoint" in file_type or \
             "Microsoft PowerPoint" in file_type or \
