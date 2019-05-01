@@ -457,10 +457,16 @@ class HwpDocument(object):
         ret = {}
         for filename, content in self.files.items():
             try:
-                decompressed = zlib.decompress(content, -15)
-                ret[filename] = decompressed
+                decompressed = zlib.decompress(content["stream_content"], -15)
+                ret[filename] = {
+                    'content': decompressed,
+                    'meta': content["meta"],
+                }
             except:
-                ret[filename] = content
+                ret[filename] = {
+                    'content': content["stream_content"],
+                    'meta': content["meta"]
+                }
         return ret
 
     def read_script(self, data):
@@ -492,7 +498,7 @@ class HwpDocument(object):
         ret = []
         for filename, content in self.files.items():
             if filename.lower().endswith("defaultjscript"):
-                decompressed = zlib.decompress(content, -15)
+                decompressed = zlib.decompress(content[stream_content], -15)
                 ret.append(self.read_script(decompressed))
         return ret
 
@@ -500,8 +506,25 @@ class HwpDocument(object):
         """Unpacks .docx-based zip files."""
         try:
             ole = olefile.OleFileIO(self.filepath)
-            for path in ole.listdir():
-                self.files['/'.join(path)] = ole.openstream(path).read()
+            streams = ole.listdir()
+            for stream in streams:
+                stream_content = ole.openstream(stream).read()
+                st = ole.get_type(stream)
+                if st == 2:
+                    st = 'stream'
+                if st == 1:
+                    st = 'storage'
+                meta = {
+                    'type_literal': st, 
+                    'sid': streams.index(stream) + 1,
+                    'size': ole.get_size(stream), 
+                    'name': '/'.join(stream)
+                }
+                content = {
+                    'stream_content': stream_content
+                    'meta': meta
+                }
+                self.files['/'.join(stream)] = content
             ole.close()
         except:
             return
