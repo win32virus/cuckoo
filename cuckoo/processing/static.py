@@ -32,6 +32,7 @@ from cuckoo.common.objects import Archive, File
 from cuckoo.common.structures import LnkHeader, LnkEntry
 from cuckoo.common.utils import convert_to_printable, to_unicode, jsbeautify
 from cuckoo.common.hwp5txt import HwpFile
+from cuckoo.common.biff_plugin import cBIFF
 from cuckoo.core.extract import ExtractManager
 from cuckoo.misc import cwd, dispatch
 
@@ -50,7 +51,7 @@ from elftools.elf.enums import ENUM_D_TAG
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 from elftools.elf.segments import NoteSegment
-from plugin_biff import cBIFF
+
 
 log = logging.getLogger(__name__)
 
@@ -447,30 +448,16 @@ class WindowsScriptFile(object):
         return ret
 
 class HwpDocument(object):
-    """Static analysis of Microsoft Office documents."""
+    """Static analysis of HWP documents."""
 
     def __init__(self, filepath):
         self.filepath = filepath
         self.files = {}
 
     def get_streams(self):
-        ret = {}
-        for filename, content in self.files.items():
-            try:
-                decompressed = zlib.decompress(content["stream_content"], -15)
-                ret[filename] = {
-                    'content': decompressed,
-                    'meta': content["meta"],
-                }
-            except:
-                ret[filename] = {
-                    'content': content["stream_content"],
-                    'meta': content["meta"]
-                }
-        return ret
+        return self.files
 
     def read_script(self, data):
-
         ret = {}
         offset = 0
 
@@ -498,33 +485,55 @@ class HwpDocument(object):
         ret = []
         for filename, content in self.files.items():
             if filename.lower().endswith("defaultjscript"):
-                decompressed = zlib.decompress(content[stream_content], -15)
-                ret.append(self.read_script(decompressed))
+                if content['meta']['compressed']:
+                    ret.append(self.read_script(content['stream_content']))
+                else:
+                    ret.append(content['stream_content'])
         return ret
 
+    def decompress_stream(self, ole, stream):
+        content = ole.openstream(stream).read()
+        try:
+            content = zlib.decompress(content, -15)
+            return content, 1
+        except:
+            return content, 0
+
+    def get_streamtype(self, ole, stream):
+        stream_type = ole.get_type(stream)
+
+        if stream_type == 2:
+            return 'stream'
+        elif stream_type == 1:
+            return 'storage'
+        else:
+            return
+
     def unpack_docx(self):
-        """Unpacks .docx-based zip files."""
+        """Unpacks ole-based zip files."""
         try:
             ole = olefile.OleFileIO(self.filepath)
             streams = ole.listdir()
             for stream in streams:
-                stream_content = ole.openstream(stream).read()
-                st = ole.get_type(stream)
-                if st == 2:
-                    st = 'stream'
-                if st == 1:
-                    st = 'storage'
+                stream_name = '/'.join(stream)
+                stream_content, is_compressed = self.decompress_stream(ole, stream)
+                stream_type = self.get_streamtype(ole, stream)
+
                 meta = {
-                    'type_literal': st, 
+                    'compressed': is_compressed,
+                    'type_literal': stream_type,
                     'sid': streams.index(stream) + 1,
-                    'size': ole.get_size(stream), 
-                    'name': '/'.join(stream)
+                    'size': ole.get_size(stream),
+                    'name': stream_name
                 }
+
                 content = {
-                    'stream_content': stream_content
+                    'stream_content': stream_content,
                     'meta': meta
                 }
-                self.files['/'.join(stream)] = content
+
+                self.files[stream_name] = content
+
             ole.close()
         except:
             return
@@ -534,8 +543,7 @@ class HwpDocument(object):
         ret = []
         for filename, content in self.files.items():
             if filename.lower().endswith(".eps") or filename.lower().endswith(".ps"):
-                content = zlib.decompress(content, -15)
-                ret.append({"filename": filename, "code": content})
+                ret.append({"filename": filename, "code": content['stream_content']})
         return ret
 
     def run(self):
@@ -583,7 +591,6 @@ class OfficeDocument(object):
         if p.type == "Text":
             return
 
-        p.xlm_macros = []
         try:
             for f, s, v, c in p.extract_macros():
                 yield {
@@ -604,14 +611,14 @@ class OfficeDocument(object):
                 log.debug('found excels stream %r' % excel_stream)
                 data = p.ole_file.openstream(excel_stream).read()
                 biff_plugin = cBIFF(name=[excel_stream], stream=data, options='x')
-                self.xlm_macros = biff_pluing.Analyze()
+                xlm_macros = biff_pluing.Analyze()
                
                 xlm_code='' 
                 for line in self.xlm_macros:
                     xlm_code += "' " + line + '\n'
                 
                 yield {
-                    "steam" : 'xlm_macro', 
+                    "steam" : excel_stream, 
                     "filename" : 'xlm_macro',
                     "orig_code" : xlm_code, 
                     "deobf" : 'xlm_macro.txt'
@@ -633,12 +640,36 @@ class OfficeDocument(object):
 
         return code
 
-    def unpack_docx(self):
-        """Unpacks .docx-based zip files."""
+    def unpack_ole(self):
+        """Unpacks ole-based zip files."""
         try:
-            z = zipfile.ZipFile(self.filepath)
-            for name in z.namelist():
-                self.files[name] = z.read(name)
+            ole = olefile.OleFileIO(self.filepath)
+            streams = ole.listdir()
+            for stream in streams:
+                stream_content = ole.openstream(stream).read()
+                stream_type = ole.get_type(stream)
+                stream_name = '/'.join(stream)
+
+                if stream_type == 2:
+                    stream_type = 'stream'
+                if stream_type == 1:
+                    stream_type = 'storage'
+
+                meta = {
+                    'type_literal': stream_type, 
+                    'sid': streams.index(stream) + 1,
+                    'size': ole.get_size(stream), 
+                    'name': stream_name
+                }
+
+                content = {
+                    'stream_content': stream_content,
+                    'meta': meta
+                }
+
+                self.files[stream_name] = content
+
+            ole.close()
         except:
             return
 
@@ -651,7 +682,7 @@ class OfficeDocument(object):
         return ret
 
     def run(self):
-        self.unpack_docx()
+        self.unpack_ole()
 
         self.ex.peek_office(self.files)
 
