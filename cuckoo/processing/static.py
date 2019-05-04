@@ -32,7 +32,7 @@ from cuckoo.common.objects import Archive, File
 from cuckoo.common.structures import LnkHeader, LnkEntry
 from cuckoo.common.utils import convert_to_printable, to_unicode, jsbeautify
 from cuckoo.common.hwp5txt import HwpFile
-from cuckoo.common.biff_plugin import cBIFF
+from cuckoo.common.plugin_biff import cBIFF
 from cuckoo.core.extract import ExtractManager
 from cuckoo.misc import cwd, dispatch
 
@@ -453,9 +453,16 @@ class HwpDocument(object):
     def __init__(self, filepath):
         self.filepath = filepath
         self.files = {}
+        self.meta = {}
 
     def get_streams(self):
-        return self.files
+        ret = {}
+        for filename, content in self.files.items():
+            ret[filename] = {
+                'stream_content': content,
+                'meta': self.meta[filename]
+            }
+        return ret
 
     def read_script(self, data):
         ret = {}
@@ -485,10 +492,10 @@ class HwpDocument(object):
         ret = []
         for filename, content in self.files.items():
             if filename.lower().endswith("defaultjscript"):
-                if content['meta']['compressed']:
-                    ret.append(self.read_script(content['stream_content']))
+                if self.meta[filename]['compressed']:
+                    ret.append(self.read_script(content))
                 else:
-                    ret.append(content['stream_content'])
+                    ret.append(content)
         return ret
 
     def decompress_stream(self, ole, stream):
@@ -509,7 +516,7 @@ class HwpDocument(object):
         else:
             return
 
-    def unpack_docx(self):
+    def unpack_ole(self):
         """Unpacks ole-based zip files."""
         try:
             ole = olefile.OleFileIO(self.filepath)
@@ -527,12 +534,8 @@ class HwpDocument(object):
                     'name': stream_name
                 }
 
-                content = {
-                    'stream_content': stream_content,
-                    'meta': meta
-                }
-
-                self.files[stream_name] = content
+                self.files[stream_name] = stream_content
+                self.meta[stream_name] = meta
 
             ole.close()
         except:
@@ -543,11 +546,11 @@ class HwpDocument(object):
         ret = []
         for filename, content in self.files.items():
             if filename.lower().endswith(".eps") or filename.lower().endswith(".ps"):
-                ret.append({"filename": filename, "code": content['stream_content']})
+                ret.append({"filename": filename, "code": content})
         return ret
 
     def run(self):
-        self.unpack_docx()
+        self.unpack_ole()
 
         return {
             "macros": self.get_macros(),
@@ -578,7 +581,18 @@ class OfficeDocument(object):
     def __init__(self, filepath, task_id):
         self.filepath = filepath
         self.files = {}
+        self.meta = {}
         self.ex = ExtractManager.for_task(task_id)
+
+    def get_streams(self):
+        ret = {}
+        for filename, content in self.files.items():
+            ret[filename] = {
+                'stream_content': content,
+                'meta': self.meta[filename]
+            }
+        return ret
+
         
     def get_macros(self):
         """Get embedded Macros if this is an Office document."""
@@ -592,39 +606,38 @@ class OfficeDocument(object):
             return
 
         try:
-            for f, s, v, c in p.extract_macros():
+            if 'Workbook' in self.files.keys(): 
+                print("find Workbook")
+                biff_plugin = cBIFF(name=['Workbook'], stream=self.files['Workbook'], options='x')
+                xlm_macros = biff_plugin.Analyze()
+                    
+                xlm_code='' 
+                for line in xlm_macros:
+                    xlm_code += "' " + line + '\n'
+                            
+                print(xlm_code)        
                 yield {
-                    "stream": s,
-                    "filename": v.decode("latin-1"),
-                    "orig_code": c.decode("latin-1"),
-                    "deobf": self.deobfuscate(c.decode("latin-1")),
+                    "steam" : 'Workbook', 
+                    "filename" : 'xlm_macro',
+                    "orig_code" : xlm_code, 
+                    "deobf" : 'xlm_macro.txt'
                 }
+
+            #get vba_macro
+            else:
+                for f, s, v, c in p.extract_macros():
+                    yield {
+                        "stream": s,
+                        "filename": v.decode("latin-1"),
+                        "orig_code": c.decode("latin-1"),
+                        "deobf": self.deobfuscate(c.decode("latin-1")),
+                    }
+
         except ValueError as e:
             log.warning(
                 "Error extracting macros from office document (this is an "
                 "issue with oletools - please report upstream): %s", e
             )
-
-        # get XLM macros
-        for excel_stream in ('Workbook','Book'):
-            if p.ole_file.exists(excel_stream):
-                log.debug('found excels stream %r' % excel_stream)
-                data = p.ole_file.openstream(excel_stream).read()
-                biff_plugin = cBIFF(name=[excel_stream], stream=data, options='x')
-                xlm_macros = biff_pluing.Analyze()
-               
-                xlm_code='' 
-                for line in self.xlm_macros:
-                    xlm_code += "' " + line + '\n'
-                
-                yield {
-                    "steam" : excel_stream, 
-                    "filename" : 'xlm_macro',
-                    "orig_code" : xlm_code, 
-                    "deobf" : 'xlm_macro.txt'
-                }
-        
-            
 
     def deobfuscate(self, code):
         """Bruteforce approach of regex-based deobfuscation."""
@@ -640,38 +653,48 @@ class OfficeDocument(object):
 
         return code
 
-    def unpack_ole(self):
+    def unpack_ole(self, ole_file):
         """Unpacks ole-based zip files."""
         try:
-            ole = olefile.OleFileIO(self.filepath)
+            ole = olefile.OleFileIO(ole_file)
             streams = ole.listdir()
             for stream in streams:
+                
                 stream_content = ole.openstream(stream).read()
                 stream_type = ole.get_type(stream)
                 stream_name = '/'.join(stream)
-
                 if stream_type == 2:
                     stream_type = 'stream'
                 if stream_type == 1:
                     stream_type = 'storage'
-
                 meta = {
                     'type_literal': stream_type, 
                     'sid': streams.index(stream) + 1,
                     'size': ole.get_size(stream), 
                     'name': stream_name
                 }
+                print(meta)
+                self.files[stream_name] = stream_content
+                self.meta[stream_name] = meta
 
-                content = {
-                    'stream_content': stream_content,
-                    'meta': meta
-                }
-
-                self.files[stream_name] = content
-
-            ole.close()
         except:
             return
+
+
+    def unpack_file(self):
+        if zipfile.is_zipfile(self.filepath):
+            z = zipfile.ZipFile(self.filepath)
+            for subfile in z.namelist():
+                with z.open(subfile) as file_handle:
+                    magic = file_handle.read(len(olefile.MAGIC))
+                if magic == olefile.MAGIC:
+                    with z.open(subfile) as file_handle:
+                        ole_data = file_handle.read()
+                        self.unpack_ole(ole_data)
+        
+        else:
+            self.unpack_ole(self.filepath)
+
 
     def extract_eps(self):
         """Extract some information from Encapsulated Post Script files."""
@@ -682,13 +705,14 @@ class OfficeDocument(object):
         return ret
 
     def run(self):
-        self.unpack_ole()
+        self.unpack_file()
 
         self.ex.peek_office(self.files)
 
         return {
             "macros": list(self.get_macros()),
             "eps": self.extract_eps(),
+            "streams": self.get_streams()
         }
 
 class PdfDocument(object):
