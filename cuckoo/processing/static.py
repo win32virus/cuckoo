@@ -655,45 +655,42 @@ class OfficeDocument(object):
 
     def unpack_ole(self, ole_file):
         """Unpacks ole-based zip files."""
-        try:
-            ole = olefile.OleFileIO(ole_file)
-            streams = ole.listdir()
-            for stream in streams:
-                
-                stream_content = ole.openstream(stream).read()
-                stream_type = ole.get_type(stream)
-                stream_name = '/'.join(stream)
-                if stream_type == 2:
-                    stream_type = 'stream'
-                if stream_type == 1:
-                    stream_type = 'storage'
-                meta = {
-                    'type_literal': stream_type, 
-                    'sid': streams.index(stream) + 1,
-                    'size': ole.get_size(stream), 
-                    'name': stream_name
-                }
-                print(meta)
-                self.files[stream_name] = stream_content
-                self.meta[stream_name] = meta
-
-        except:
-            return
+        
+        ole = olefile.OleFileIO(ole_file)
+        streams = ole.listdir()
+        for stream in streams:    
+            stream_content = ole.openstream(stream).read()
+            stream_type = ole.get_type(stream)
+            stream_name = '/'.join(stream)
+            if stream_type == 2:
+                stream_type = 'stream'
+            if stream_type == 1:
+                stream_type = 'storage'
+            meta = {
+                'type_literal': stream_type, 
+                'sid': streams.index(stream) + 1,
+                'size': ole.get_size(stream), 
+                'name': stream_name
+            }
+            print(meta)
+            self.files[stream_name] = stream_content
+            self.meta[stream_name] = meta
 
 
     def unpack_file(self):
-        if zipfile.is_zipfile(self.filepath):
+        try:
+            self.unpack_ole(self.filepath)
+        except:            
             z = zipfile.ZipFile(self.filepath)
             for subfile in z.namelist():
+                print(subfile)
                 with z.open(subfile) as file_handle:
                     magic = file_handle.read(len(olefile.MAGIC))
                 if magic == olefile.MAGIC:
+                    print('Opening OLE file %s within zip' % subfile)
                     with z.open(subfile) as file_handle:
                         ole_data = file_handle.read()
                         self.unpack_ole(ole_data)
-        
-        else:
-            self.unpack_ole(self.filepath)
 
 
     def extract_eps(self):
