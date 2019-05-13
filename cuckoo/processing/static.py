@@ -31,7 +31,6 @@ from cuckoo.common.abstracts import Processing
 from cuckoo.common.objects import Archive, File
 from cuckoo.common.structures import LnkHeader, LnkEntry
 from cuckoo.common.utils import convert_to_printable, to_unicode, jsbeautify
-from cuckoo.common.hwp5txt import HwpFile
 from cuckoo.common.plugin_biff import cBIFF
 from cuckoo.core.extract import ExtractManager
 from cuckoo.misc import cwd, dispatch
@@ -455,6 +454,11 @@ class HwpDocument(object):
         self.files = {}
         self.meta = {}
 
+    def get_content(self):
+        ret = self.files["PrvText"].decode("utf-16le")
+
+        return ret
+
     def get_streams(self):
         ret = {}
         for filename, content in self.files.items():
@@ -555,7 +559,7 @@ class HwpDocument(object):
         return {
             "macros": self.get_macros(),
             "eps": self.extract_eps(),
-            "content": HwpFile(self.filepath).get_text(),
+            "content": self.get_content(),
             "streams": self.get_streams()
         }
 
