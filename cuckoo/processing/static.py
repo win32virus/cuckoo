@@ -446,6 +446,7 @@ class WindowsScriptFile(object):
 
         return ret
 
+
 class HwpDocument(object):
     """Static analysis of HWP documents."""
 
@@ -469,6 +470,7 @@ class HwpDocument(object):
         return ret
 
     def read_script(self, data):
+
         ret = {}
         offset = 0
 
@@ -700,8 +702,12 @@ class OfficeDocument(object):
         """Extract some information from Encapsulated Post Script files."""
         ret = []
         for filename, content in self.files.items():
-            if filename.lower().endswith(".eps"):
-                ret.extend(re.findall(self.eps_comments, content))
+            if filename.lower().endswith(".eps") or filename.lower().endswith(".ps"):
+                content = zlib.decompress(content, -15)
+                ret.append({
+                    "filename": filename,
+                    "orig_code": content
+                    })
         return ret
 
     def run(self):
@@ -1259,12 +1265,12 @@ class Static(Processing):
 
         if package == "wsf" or ext == "wsf":
             static["wsf"] = WindowsScriptFile(f.file_path).run()
+        
+        if package == "hwp" or ext == "hwp":
+            static["hwp"] = HwpDocument(f.file_path).run()
 
         if package in ("doc", "ppt", "xls") or ext in self.office_ext:
             static["office"] = OfficeDocument(f.file_path, self.task["id"]).run()
-
-        if package == "hwp" or ext == "hwp":
-            static["hwp"] = HwpDocument(f.file_path).run()
 
         if package == "pdf" or ext == "pdf":
             if f.get_content_type() == "application/pdf":
