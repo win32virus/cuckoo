@@ -9,6 +9,7 @@ import datetime
 import logging
 import oletools.olevba
 import oletools.oleobj
+import olefile
 import os
 import peepdf.JSAnalysis
 import peepdf.PDFCore
@@ -30,6 +31,7 @@ from cuckoo.common.abstracts import Processing
 from cuckoo.common.objects import Archive, File
 from cuckoo.common.structures import LnkHeader, LnkEntry
 from cuckoo.common.utils import convert_to_printable, to_unicode, jsbeautify
+from cuckoo.common.plugin_biff import cBIFF
 from cuckoo.core.extract import ExtractManager
 from cuckoo.misc import cwd, dispatch
 
@@ -48,6 +50,7 @@ from elftools.elf.enums import ENUM_D_TAG
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 from elftools.elf.segments import NoteSegment
+
 
 log = logging.getLogger(__name__)
 
@@ -443,6 +446,125 @@ class WindowsScriptFile(object):
 
         return ret
 
+
+class HwpDocument(object):
+    """Static analysis of HWP documents."""
+
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.files = {}
+        self.meta = {}
+
+    def get_content(self):
+        ret = self.files["PrvText"].decode("utf-16le")
+
+        return ret
+
+    def get_streams(self):
+        ret = {}
+        for filename, content in self.files.items():
+            ret[filename] = {
+                'stream_content': content,
+                'meta': self.meta[filename]
+            }
+        return ret
+
+    def read_script(self, data):
+
+        ret = {}
+        offset = 0
+
+        len1 = struct.unpack("<L", data[offset: offset + 4])[0]
+        ret["header"] = data[offset + 4: offset + 4 + len1 * 2]
+        offset += len1 * 2 + 4
+
+        len2 = struct.unpack("<L", data[offset: offset + 4])[0]
+        ret["src"] = data[offset + 4: offset + 4 + len2 * 2]
+        offset += len2 * 2 + 4
+
+        len3 = struct.unpack("<L", data[offset: offset + 4])[0]
+        ret["pre_src"] = data[offset + 4: offset + 4 + len3 * 2]
+        offset += len3 * 2 + 4
+
+        len4 = struct.unpack("<L", data[offset: offset + 4])[0]
+        ret["post_src"] = data[offset + 4: offset + 4 + len4 * 2]
+
+        for content in ret:
+            ret[content] = ret[content].replace("\x00", "")
+
+        return ret
+
+    def get_macros(self):
+        ret = []
+        for filename, content in self.files.items():
+            if filename.lower().endswith("defaultjscript"):
+                if self.meta[filename]['compressed']:
+                    ret.append(self.read_script(content))
+                else:
+                    ret.append(content)
+        return ret
+
+    def decompress_stream(self, ole, stream):
+        content = ole.openstream(stream).read()
+        try:
+            content = zlib.decompress(content, -15)
+            return content, 1
+        except:
+            return content, 0
+
+    def get_streamtype(self, ole, stream):
+        stream_type = ole.get_type(stream)
+
+        if stream_type == 2:
+            return 'stream'
+        elif stream_type == 1:
+            return 'storage'
+        else:
+            return
+
+    def unpack_ole(self):
+        """Unpacks ole-based zip files."""
+        try:
+            ole = olefile.OleFileIO(self.filepath)
+            streams = ole.listdir()
+            for stream in streams:
+                stream_name = '/'.join(stream)
+                stream_content, is_compressed = self.decompress_stream(ole, stream)
+                stream_type = self.get_streamtype(ole, stream)
+
+                meta = {
+                    'compressed': is_compressed,
+                    'type_literal': stream_type,
+                    'sid': streams.index(stream) + 1,
+                    'size': ole.get_size(stream),
+                    'name': stream_name
+                }
+
+                self.files[stream_name] = stream_content
+                self.meta[stream_name] = meta
+
+            ole.close()
+        except:
+            return
+
+    def extract_eps(self):
+        """Extract some information from Encapsulated Post Script files."""
+        ret = []
+        for filename, content in self.files.items():
+            if filename.lower().endswith(".eps") or filename.lower().endswith(".ps"):
+                ret.append({"filename": filename, "code": content})
+        return ret
+
+    def run(self):
+        self.unpack_ole()
+
+        return {
+            "macros": self.get_macros(),
+            "eps": self.extract_eps(),
+            "content": self.get_content(),
+            "streams": self.get_streams()
+        }
+
 class OfficeDocument(object):
     """Static analysis of Microsoft Office documents."""
     deobf = [
@@ -465,8 +587,19 @@ class OfficeDocument(object):
     def __init__(self, filepath, task_id):
         self.filepath = filepath
         self.files = {}
+        self.meta = {}
         self.ex = ExtractManager.for_task(task_id)
 
+    def get_streams(self):
+        ret = {}
+        for filename, content in self.files.items():
+            ret[filename] = {
+                'stream_content': content,
+                'meta': self.meta[filename]
+            }
+        return ret
+
+        
     def get_macros(self):
         """Get embedded Macros if this is an Office document."""
         try:
@@ -479,13 +612,33 @@ class OfficeDocument(object):
             return
 
         try:
-            for f, s, v, c in p.extract_macros():
+            if 'Workbook' in self.files.keys(): 
+                print("find Workbook")
+                biff_plugin = cBIFF(name=['Workbook'], stream=self.files['Workbook'], options='x')
+                xlm_macros = biff_plugin.Analyze()
+                    
+                xlm_code='' 
+                for line in xlm_macros:
+                    xlm_code += "' " + line + '\n'
+                            
+                print(xlm_code)        
                 yield {
-                    "stream": s,
-                    "filename": v.decode("latin-1"),
-                    "orig_code": c.decode("latin-1"),
-                    "deobf": self.deobfuscate(c.decode("latin-1")),
+                    "steam" : 'Workbook', 
+                    "filename" : 'xlm_macro',
+                    "orig_code" : xlm_code, 
+                    "deobf" : 'xlm_macro.txt'
                 }
+
+            #get vba_macro
+            else:
+                for f, s, v, c in p.extract_macros():
+                    yield {
+                        "stream": s,
+                        "filename": v.decode("latin-1"),
+                        "orig_code": c.decode("latin-1"),
+                        "deobf": self.deobfuscate(c.decode("latin-1")),
+                    }
+
         except ValueError as e:
             log.warning(
                 "Error extracting macros from office document (this is an "
@@ -506,31 +659,66 @@ class OfficeDocument(object):
 
         return code
 
-    def unpack_docx(self):
-        """Unpacks .docx-based zip files."""
+    def unpack_ole(self, ole_file):
+        """Unpacks ole-based zip files."""
+        
+        ole = olefile.OleFileIO(ole_file)
+        streams = ole.listdir()
+        for stream in streams:    
+            stream_content = ole.openstream(stream).read()
+            stream_type = ole.get_type(stream)
+            stream_name = '/'.join(stream)
+            if stream_type == 2:
+                stream_type = 'stream'
+            if stream_type == 1:
+                stream_type = 'storage'
+            meta = {
+                'type_literal': stream_type, 
+                'sid': streams.index(stream) + 1,
+                'size': ole.get_size(stream), 
+                'name': stream_name
+            }
+            print(meta)
+            self.files[stream_name] = stream_content
+            self.meta[stream_name] = meta
+
+
+    def unpack_file(self):
         try:
+            self.unpack_ole(self.filepath)
+        except:            
             z = zipfile.ZipFile(self.filepath)
-            for name in z.namelist():
-                self.files[name] = z.read(name)
-        except:
-            return
+            for subfile in z.namelist():
+                zdata = z.read(subfile)
+                self.files[subfile] = zdata
+                self.meta[subfile] = {
+                                        'type_literal': None,
+                                        'sid': None,
+                                        'size': len(zdata),
+                                        'name': subfile
+                                     }
 
     def extract_eps(self):
         """Extract some information from Encapsulated Post Script files."""
         ret = []
         for filename, content in self.files.items():
-            if filename.lower().endswith(".eps"):
-                ret.extend(re.findall(self.eps_comments, content))
+            if filename.lower().endswith(".eps") or filename.lower().endswith(".ps"):
+                content = zlib.decompress(content, -15)
+                ret.append({
+                    "filename": filename,
+                    "orig_code": content
+                    })
         return ret
 
     def run(self):
-        self.unpack_docx()
+        self.unpack_file()
 
         self.ex.peek_office(self.files)
 
         return {
             "macros": list(self.get_macros()),
             "eps": self.extract_eps(),
+            "streams": self.get_streams()
         }
 
 class PdfDocument(object):
@@ -1032,8 +1220,8 @@ class Static(Processing):
     """Static analysis."""
 
     office_ext = [
-        "doc", "docm", "dotm", "docx", "hwp", "ppt", "pptm", "pptx", "potm",
-        "ppam", "ppsm", "xls", "xlsm", "xlsx",
+        "doc", "docm", "dotm", "docx", "ppt", "pptm", "pptx", "potm",
+        "ppam", "ppsm", "xls", "xlsm", "xlsx", "xlm",
     ]
 
     def run(self):
@@ -1077,6 +1265,9 @@ class Static(Processing):
 
         if package == "wsf" or ext == "wsf":
             static["wsf"] = WindowsScriptFile(f.file_path).run()
+        
+        if package == "hwp" or ext == "hwp":
+            static["hwp"] = HwpDocument(f.file_path).run()
 
         if package in ("doc", "ppt", "xls") or ext in self.office_ext:
             static["office"] = OfficeDocument(f.file_path, self.task["id"]).run()
