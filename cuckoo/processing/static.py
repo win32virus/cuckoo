@@ -613,7 +613,6 @@ class OfficeDocument(object):
 
         try:
             if 'Workbook' in self.files.keys(): 
-                print("find Workbook")
                 biff_plugin = cBIFF(name=['Workbook'], stream=self.files['Workbook'], options='x')
                 xlm_macros = biff_plugin.Analyze()
                     
@@ -621,9 +620,8 @@ class OfficeDocument(object):
                 for line in xlm_macros:
                     xlm_code += "' " + line + '\n'
                             
-                print(xlm_code)        
                 yield {
-                    "steam" : 'Workbook', 
+                    "stream" : 'Workbook', 
                     "filename" : 'xlm_macro',
                     "orig_code" : xlm_code, 
                     "deobf" : 'xlm_macro.txt'
@@ -678,7 +676,6 @@ class OfficeDocument(object):
                 'size': ole.get_size(stream), 
                 'name': stream_name
             }
-            print(meta)
             self.files[stream_name] = stream_content
             self.meta[stream_name] = meta
 
