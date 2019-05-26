@@ -685,15 +685,17 @@ class OfficeDocument(object):
             self.unpack_ole(self.filepath)
         except:            
             z = zipfile.ZipFile(self.filepath)
+            idx =  0
             for subfile in z.namelist():
                 zdata = z.read(subfile)
                 self.files[subfile] = zdata
                 self.meta[subfile] = {
-                                        'type_literal': None,
-                                        'sid': None,
+                                        'type_literal': 'stream',
+                                        'sid': idx,
                                         'size': len(zdata),
                                         'name': subfile
                                      }
+                idx += 1
 
     def extract_eps(self):
         """Extract some information from Encapsulated Post Script files."""
